@@ -1,0 +1,251 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated election staff profile with role-based access control.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "officer"] },
+        "assignedConstituency": { "type": "string", "maxLength": 80 },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted Election Administrator allowlist document for zero-trust Firestore RBAC.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 160 },
+        "grantedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "Election": {
+      "title": "Election",
+      "description": "Election configuration, ballot versioning, turnout totals, and database-enforced result seal state.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 500 },
+        "constituencies": { "type": "array", "description": "Bounded list of constituency names (1-20 items)." },
+        "startTime": { "type": "string", "format": "date-time", "minLength": 10, "maxLength": 40 },
+        "endTime": { "type": "string", "format": "date-time", "minLength": 10, "maxLength": 40 },
+        "status": { "type": "string", "enum": ["draft", "active", "closed"] },
+        "resultsUnsealed": { "type": "boolean" },
+        "ballotVersion": { "type": "integer" },
+        "ballotHash": { "type": "string", "maxLength": 128 },
+        "totalRegisteredVoters": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "validationPassed": { "type": "boolean" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unsealedBy": { "type": "string", "maxLength": 128 },
+        "unsealedByEmail": { "type": "string", "maxLength": 160 },
+        "unsealedAt": { "type": "string", "format": "date-time" },
+        "closedAt": { "type": "string", "format": "date-time" },
+        "lastPushedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title",
+        "description",
+        "constituencies",
+        "startTime",
+        "endTime",
+        "status",
+        "resultsUnsealed",
+        "ballotVersion",
+        "ballotHash",
+        "totalRegisteredVoters",
+        "totalVotesCast",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Election candidate ballot entry containing zero vote count fields to preserve tally sealing.",
+      "type": "object",
+      "properties": {
+        "electionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "party": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "constituency": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "ballotNumber": { "type": "integer" },
+        "symbolUrl": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "accentColor": { "type": "string", "minLength": 4, "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["electionId", "name", "party", "constituency", "ballotNumber", "symbolUrl", "accentColor", "createdAt"]
+    },
+    "AnonymizedBallot": {
+      "title": "AnonymizedBallot",
+      "description": "Strictly decoupled cast ballot document containing no voter identity or biometric template ID.",
+      "type": "object",
+      "properties": {
+        "electionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "candidateId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "boothId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "constituency": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "receiptHash": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "syncMode": { "type": "string", "enum": ["online", "offline_reconciled"] },
+        "castAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["electionId", "candidateId", "boothId", "constituency", "receiptHash", "idempotencyKey", "syncMode", "castAt"]
+    },
+    "SealedTally": {
+      "title": "SealedTally",
+      "description": "Candidate vote split accumulator locked at the Firestore rules level until polls close and an admin unseals.",
+      "type": "object",
+      "properties": {
+        "electionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "counts": { "type": "object", "description": "Map of candidateId to integer vote count." },
+        "totalTallied": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["electionId", "counts", "totalTallied", "updatedAt"]
+    },
+    "EvmBooth": {
+      "title": "EvmBooth",
+      "description": "Provisioned ESP32 Fingerprint EVM polling booth hardware unit with live telemetry and offline queue metrics.",
+      "type": "object",
+      "properties": {
+        "boothCode": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "constituency": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "electionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "apiKeyPrefix": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "apiKeyHash": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["online", "degraded", "offline", "tampered"] },
+        "syncState": { "type": "string", "enum": ["synced", "offline_queuing", "syncing", "conflict_alert"] },
+        "wifiRssi": { "type": "integer" },
+        "syncLatencyMs": { "type": "integer" },
+        "batteryPct": { "type": "integer" },
+        "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "ballotVersion": { "type": "integer" },
+        "votesCast": { "type": "integer" },
+        "pendingOfflineVotes": { "type": "integer" },
+        "offlineQueueBytes": { "type": "integer" },
+        "localConflictCount": { "type": "integer" },
+        "tamperState": { "type": "string", "enum": ["nominal", "enclosure_open", "sensor_fault", "voltage_anomaly"] },
+        "lcdMessage": { "type": "string", "maxLength": 80 },
+        "pendingCommand": { "type": "object" },
+        "lastHeartbeatAt": { "type": "string", "format": "date-time" },
+        "offlineSince": { "type": "string", "format": "date-time" },
+        "lastSyncAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "boothCode",
+        "name",
+        "constituency",
+        "electionId",
+        "apiKeyPrefix",
+        "apiKeyHash",
+        "status",
+        "syncState",
+        "wifiRssi",
+        "syncLatencyMs",
+        "batteryPct",
+        "firmwareVersion",
+        "ballotVersion",
+        "votesCast",
+        "pendingOfflineVotes",
+        "offlineQueueBytes",
+        "tamperState",
+        "lcdMessage",
+        "lastHeartbeatAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Voter": {
+      "title": "Voter",
+      "description": "Registered voter profile mapped only to an opaque ESP32 fingerprint template ID and anti-duplicate voted flag.",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "voterIdNumber": { "type": "string", "minLength": 3, "maxLength": 40 },
+        "constituency": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "electionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "enrollmentStatus": { "type": "string", "enum": ["pending", "enrolling", "enrolled"] },
+        "fingerprintTemplateId": { "type": "string", "maxLength": 40 },
+        "enrolledBoothId": { "type": "string", "maxLength": 128 },
+        "hasVoted": { "type": "boolean" },
+        "votedBoothId": { "type": "string", "maxLength": 128 },
+        "votedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fullName", "voterIdNumber", "constituency", "electionId", "enrollmentStatus", "hasVoted", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable append-only audit trail recording administrative actions, officer enrollments, ESP32 telemetry, offline sync reconciliations, and result unseals.",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string", "enum": ["ADMIN", "OFFICER", "ESP32", "SECURITY", "UNSEAL", "OFFLINE_SYNC"] },
+        "action": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorEmail": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "actorRole": { "type": "string", "enum": ["admin", "officer", "esp32"] },
+        "boothId": { "type": "string", "maxLength": 128 },
+        "electionId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "metadata": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["category", "action", "severity", "actorUid", "actorEmail", "actorRole", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Authenticated operator profiles with PII restricted to self or admin."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted Election Administrator allowlist documents."
+    },
+    "/elections/{electionId}": {
+      "schema": { "$ref": "#/entities/Election" },
+      "description": "Election configurations, live turnout counts, and seal state."
+    },
+    "/elections/{electionId}/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/Candidate" },
+      "description": "Candidate ballot entries without vote counts."
+    },
+    "/elections/{electionId}/ballots/{ballotId}": {
+      "schema": { "$ref": "#/entities/AnonymizedBallot" },
+      "description": "Decoupled anonymized cast ballots locked until election closes and results are unsealed."
+    },
+    "/elections/{electionId}/sealed_tallies/{tallyId}": {
+      "schema": { "$ref": "#/entities/SealedTally" },
+      "description": "Database-rule-enforced sealed candidate vote tally document ('official')."
+    },
+    "/booths/{boothId}": {
+      "schema": { "$ref": "#/entities/EvmBooth" },
+      "description": "ESP32 EVM hardware units, health telemetry, and offline sync queue state."
+    },
+    "/voters/{voterId}": {
+      "schema": { "$ref": "#/entities/Voter" },
+      "description": "Voter registry with opaque fingerprint template IDs and anti-duplicate voted flag."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Append-only immutable audit log collection."
+    }
+  }
+}

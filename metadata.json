@@ -1,0 +1,6 @@
+{
+  "name": "Smart Vote",
+  "description": "Real-time ESP32 Fingerprint Electronic Voting Machine (EVM) management console, biometric voter enrollment, database-enforced result sealing, and offline booth synchronization PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

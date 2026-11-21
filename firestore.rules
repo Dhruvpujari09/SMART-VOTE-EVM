@@ -1,0 +1,518 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================
+    // Pillar 3 & Global Identity Primitives
+    // =========================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedSignedIn() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isVerifiedSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedSignedIn() && request.auth.token.email == 'chandrashekar.puj@gmail.com';
+    }
+
+    function isAdmin() {
+      return isVerifiedSignedIn() && (
+        isBootstrappedAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOfficer() {
+      return isVerifiedSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'officer';
+    }
+
+    function isStaff() {
+      return isAdmin() || isOfficer();
+    }
+
+    // =========================================================
+    // Pillar 2: Strict Validation Blueprints (Anti-Update-Gap)
+    // =========================================================
+    function isValidUser(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'assignedConstituency', 'photoUrl', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == uid && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.role in ['admin', 'officer']
+        && (!('assignedConstituency' in data) || (data.assignedConstituency is string && data.assignedConstituency.size() <= 80))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt'])
+        && data.uid is string && data.uid == uid && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidElection(data) {
+      return data.keys().hasAll([
+          'title', 'description', 'constituencies', 'startTime', 'endTime',
+          'status', 'resultsUnsealed', 'ballotVersion', 'ballotHash',
+          'totalRegisteredVoters', 'totalVotesCast', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'description', 'constituencies', 'startTime', 'endTime',
+          'status', 'resultsUnsealed', 'ballotVersion', 'ballotHash',
+          'totalRegisteredVoters', 'totalVotesCast', 'validationPassed',
+          'createdBy', 'unsealedBy', 'unsealedByEmail', 'unsealedAt',
+          'closedAt', 'lastPushedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 120
+        && data.description is string && data.description.size() <= 500
+        && data.constituencies is list && data.constituencies.size() >= 1 && data.constituencies.size() <= 20
+        && data.constituencies[0] is string && data.constituencies[0].size() >= 1 && data.constituencies[0].size() <= 80
+        && data.startTime is string && data.startTime.size() >= 10 && data.startTime.size() <= 40
+        && data.endTime is string && data.endTime.size() >= 10 && data.endTime.size() <= 40
+        && data.status in ['draft', 'active', 'closed']
+        && data.resultsUnsealed is bool
+        && data.ballotVersion is int && data.ballotVersion >= 1 && data.ballotVersion <= 10000
+        && data.ballotHash is string && data.ballotHash.size() <= 128
+        && data.totalRegisteredVoters is int && data.totalRegisteredVoters >= 0
+        && data.totalVotesCast is int && data.totalVotesCast >= 0
+        && (!('validationPassed' in data) || data.validationPassed is bool)
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && (!('unsealedBy' in data) || (data.unsealedBy is string && data.unsealedBy.size() <= 128))
+        && (!('unsealedByEmail' in data) || (data.unsealedByEmail is string && data.unsealedByEmail.size() <= 160))
+        && (!('unsealedAt' in data) || data.unsealedAt is timestamp)
+        && (!('closedAt' in data) || data.closedAt is timestamp)
+        && (!('lastPushedAt' in data) || data.lastPushedAt is timestamp)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCandidate(data, electionId) {
+      return data.keys().hasAll([
+          'electionId', 'name', 'party', 'constituency',
+          'ballotNumber', 'symbolUrl', 'accentColor', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'electionId', 'name', 'party', 'constituency',
+          'ballotNumber', 'symbolUrl', 'accentColor', 'createdAt'
+        ])
+        && data.electionId is string && data.electionId == electionId && isValidId(data.electionId)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.party is string && data.party.size() >= 2 && data.party.size() <= 100
+        && data.constituency is string && data.constituency.size() >= 2 && data.constituency.size() <= 80
+        && data.ballotNumber is int && data.ballotNumber >= 1 && data.ballotNumber <= 99
+        && data.symbolUrl is string && data.symbolUrl.size() >= 1 && data.symbolUrl.size() <= 500
+        && data.accentColor is string && data.accentColor.size() >= 4 && data.accentColor.size() <= 20
+        && data.createdAt is timestamp;
+    }
+
+    function isValidBallot(data, electionId) {
+      // Strictly decouples voter identity: NO voterId or fingerprintTemplateId keys allowed!
+      return data.keys().hasAll([
+          'electionId', 'candidateId', 'boothId', 'constituency',
+          'receiptHash', 'idempotencyKey', 'syncMode', 'castAt'
+        ])
+        && data.keys().hasOnly([
+          'electionId', 'candidateId', 'boothId', 'constituency',
+          'receiptHash', 'idempotencyKey', 'syncMode', 'castAt'
+        ])
+        && data.electionId is string && data.electionId == electionId && isValidId(data.electionId)
+        && data.candidateId is string && isValidId(data.candidateId)
+        && data.boothId is string && isValidId(data.boothId)
+        && data.constituency is string && data.constituency.size() >= 2 && data.constituency.size() <= 80
+        && data.receiptHash is string && data.receiptHash.size() >= 8 && data.receiptHash.size() <= 128
+        && data.idempotencyKey is string && data.idempotencyKey.size() >= 8 && data.idempotencyKey.size() <= 128
+        && data.syncMode in ['online', 'offline_reconciled']
+        && data.castAt is timestamp;
+    }
+
+    function isValidSealedTally(data, electionId) {
+      return data.keys().hasAll(['electionId', 'counts', 'totalTallied', 'updatedAt'])
+        && data.keys().hasOnly(['electionId', 'counts', 'totalTallied', 'updatedAt'])
+        && data.electionId is string && data.electionId == electionId && isValidId(data.electionId)
+        && data.counts is map
+        && data.totalTallied is int && data.totalTallied >= 0
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBooth(data) {
+      return data.keys().hasAll([
+          'boothCode', 'name', 'constituency', 'electionId',
+          'apiKeyPrefix', 'apiKeyHash', 'status', 'syncState',
+          'wifiRssi', 'syncLatencyMs', 'batteryPct', 'firmwareVersion',
+          'ballotVersion', 'votesCast', 'pendingOfflineVotes', 'offlineQueueBytes',
+          'tamperState', 'lcdMessage', 'lastHeartbeatAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'boothCode', 'name', 'constituency', 'electionId',
+          'apiKeyPrefix', 'apiKeyHash', 'status', 'syncState',
+          'wifiRssi', 'syncLatencyMs', 'batteryPct', 'firmwareVersion',
+          'ballotVersion', 'votesCast', 'pendingOfflineVotes', 'offlineQueueBytes',
+          'localConflictCount', 'tamperState', 'lcdMessage', 'pendingCommand',
+          'lastHeartbeatAt', 'offlineSince', 'lastSyncAt', 'createdAt', 'updatedAt'
+        ])
+        && data.boothCode is string && data.boothCode.size() >= 2 && data.boothCode.size() <= 32
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.constituency is string && data.constituency.size() >= 2 && data.constituency.size() <= 80
+        && data.electionId is string && isValidId(data.electionId)
+        && data.apiKeyPrefix is string && data.apiKeyPrefix.size() >= 4 && data.apiKeyPrefix.size() <= 32
+        && data.apiKeyHash is string && data.apiKeyHash.size() >= 8 && data.apiKeyHash.size() <= 128
+        && data.status in ['online', 'degraded', 'offline', 'tampered']
+        && data.syncState in ['synced', 'offline_queuing', 'syncing', 'conflict_alert']
+        && data.wifiRssi is int && data.wifiRssi >= -120 && data.wifiRssi <= 0
+        && data.syncLatencyMs is int && data.syncLatencyMs >= 0 && data.syncLatencyMs <= 60000
+        && data.batteryPct is int && data.batteryPct >= 0 && data.batteryPct <= 100
+        && data.firmwareVersion is string && data.firmwareVersion.size() >= 1 && data.firmwareVersion.size() <= 32
+        && data.ballotVersion is int && data.ballotVersion >= 0
+        && data.votesCast is int && data.votesCast >= 0
+        && data.pendingOfflineVotes is int && data.pendingOfflineVotes >= 0
+        && data.offlineQueueBytes is int && data.offlineQueueBytes >= 0
+        && (!('localConflictCount' in data) || (data.localConflictCount is int && data.localConflictCount >= 0))
+        && data.tamperState in ['nominal', 'enclosure_open', 'sensor_fault', 'voltage_anomaly']
+        && data.lcdMessage is string && data.lcdMessage.size() <= 80
+        && (!('pendingCommand' in data) || data.pendingCommand == null || data.pendingCommand is map)
+        && data.lastHeartbeatAt is timestamp
+        && (!('offlineSince' in data) || data.offlineSince == null || data.offlineSince is timestamp)
+        && (!('lastSyncAt' in data) || data.lastSyncAt == null || data.lastSyncAt is timestamp)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVoter(data) {
+      // Strictly prohibits candidateId or raw biometric payloads
+      return data.keys().hasAll([
+          'fullName', 'voterIdNumber', 'constituency', 'electionId',
+          'enrollmentStatus', 'hasVoted', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'fullName', 'voterIdNumber', 'constituency', 'electionId',
+          'enrollmentStatus', 'fingerprintTemplateId', 'enrolledBoothId',
+          'hasVoted', 'votedBoothId', 'votedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
+        && data.voterIdNumber is string && data.voterIdNumber.size() >= 3 && data.voterIdNumber.size() <= 40
+        && data.constituency is string && data.constituency.size() >= 2 && data.constituency.size() <= 80
+        && data.electionId is string && isValidId(data.electionId)
+        && data.enrollmentStatus in ['pending', 'enrolling', 'enrolled']
+        && (!('fingerprintTemplateId' in data) || data.fingerprintTemplateId == null || (data.fingerprintTemplateId is string && data.fingerprintTemplateId.size() <= 40))
+        && (!('enrolledBoothId' in data) || data.enrolledBoothId == null || (data.enrolledBoothId is string && data.enrolledBoothId.size() <= 128))
+        && data.hasVoted is bool
+        && (!('votedBoothId' in data) || data.votedBoothId == null || (data.votedBoothId is string && data.votedBoothId.size() <= 128))
+        && (!('votedAt' in data) || data.votedAt == null || data.votedAt is timestamp)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+          'category', 'action', 'severity', 'actorUid',
+          'actorEmail', 'actorRole', 'summary', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'category', 'action', 'severity', 'actorUid',
+          'actorEmail', 'actorRole', 'boothId', 'electionId',
+          'summary', 'metadata', 'createdAt'
+        ])
+        && data.category in ['ADMIN', 'OFFICER', 'ESP32', 'SECURITY', 'UNSEAL', 'OFFLINE_SYNC']
+        && data.action is string && data.action.size() >= 2 && data.action.size() <= 80
+        && data.severity in ['info', 'warning', 'critical']
+        && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
+        && data.actorEmail is string && data.actorEmail.size() >= 1 && data.actorEmail.size() <= 160
+        && data.actorRole in ['admin', 'officer', 'esp32']
+        && (!('boothId' in data) || data.boothId == null || (data.boothId is string && data.boothId.size() <= 128))
+        && (!('electionId' in data) || data.electionId == null || (data.electionId is string && data.electionId.size() <= 128))
+        && data.summary is string && data.summary.size() >= 2 && data.summary.size() <= 400
+        && (!('metadata' in data) || data.metadata is map)
+        && data.createdAt is timestamp;
+    }
+
+    // =========================================================
+    // Collection Match Blocks
+    // =========================================================
+
+    match /users/{uid} {
+      allow get: if isVerifiedSignedIn() && isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isVerifiedSignedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow create: if isVerifiedSignedIn()
+        && isValidId(uid)
+        && isValidUser(incoming(), uid)
+        && isOwner(uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          incoming().role == 'officer' ||
+          (incoming().role == 'admin' && isBootstrappedAdmin())
+        );
+      allow update: if isVerifiedSignedIn()
+        && isValidId(uid)
+        && isValidUser(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'assignedConstituency', 'displayName', 'updatedAt'])) ||
+          (isOwner(uid) && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'assignedConstituency', 'photoUrl', 'updatedAt']))
+        );
+      allow delete: if isVerifiedSignedIn() && isValidId(uid) && isAdmin() && uid != request.auth.uid;
+    }
+
+    match /admins/{uid} {
+      allow get: if isVerifiedSignedIn() && isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isVerifiedSignedIn() && isAdmin();
+      allow create: if isVerifiedSignedIn()
+        && isValidId(uid)
+        && isValidAdminRecord(incoming(), uid)
+        && isAdmin()
+        && incoming().grantedBy == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isVerifiedSignedIn() && isValidId(uid) && isAdmin() && uid != request.auth.uid;
+    }
+
+    match /elections/{electionId} {
+      allow get: if isVerifiedSignedIn() && isValidId(electionId) && isStaff();
+      allow list: if isVerifiedSignedIn() && isStaff();
+      allow create: if isVerifiedSignedIn()
+        && isValidId(electionId)
+        && isValidElection(incoming())
+        && isAdmin()
+        && incoming().createdBy == request.auth.uid
+        && incoming().resultsUnsealed == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedSignedIn()
+        && isValidId(electionId)
+        && isValidElection(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Admin edits draft/active election or closes polls (cannot unseal before closing)
+          (isAdmin()
+            && existing().status != 'closed'
+            && incoming().resultsUnsealed == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'description', 'constituencies', 'startTime', 'endTime',
+              'status', 'ballotVersion', 'ballotHash', 'totalRegisteredVoters',
+              'totalVotesCast', 'validationPassed', 'closedAt', 'lastPushedAt', 'updatedAt'
+            ])) ||
+          // Action 2: Admin unseals results ONLY after polls are closed
+          (isAdmin()
+            && existing().status == 'closed'
+            && existing().resultsUnsealed == false
+            && incoming().status == 'closed'
+            && incoming().resultsUnsealed == true
+            && incoming().unsealedBy == request.auth.uid
+            && incoming().unsealedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'resultsUnsealed', 'unsealedAt', 'unsealedBy', 'unsealedByEmail', 'updatedAt'
+            ])) ||
+          // Action 3: Staff increments live turnout/registration counters while active
+          (isStaff()
+            && existing().status == 'active'
+            && incoming().status == 'active'
+            && incoming().resultsUnsealed == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'totalRegisteredVoters', 'totalVotesCast', 'updatedAt'
+            ]))
+        );
+      allow delete: if isVerifiedSignedIn() && isValidId(electionId) && isAdmin();
+
+      match /candidates/{candidateId} {
+        allow get: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(candidateId)
+          && isStaff()
+          && exists(/databases/$(database)/documents/elections/$(electionId));
+        allow list: if isVerifiedSignedIn() && isStaff();
+        allow create: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(candidateId)
+          && isValidCandidate(incoming(), electionId)
+          && isAdmin()
+          && incoming().createdAt == request.time
+          && existsAfter(/databases/$(database)/documents/elections/$(electionId))
+          && getAfter(/databases/$(database)/documents/elections/$(electionId)).data.status != 'closed';
+        allow update: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(candidateId)
+          && isValidCandidate(incoming(), electionId)
+          && isAdmin()
+          && incoming().electionId == existing().electionId
+          && incoming().createdAt == existing().createdAt
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status != 'closed'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'party', 'constituency', 'ballotNumber', 'symbolUrl', 'accentColor'
+          ]);
+        allow delete: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(candidateId)
+          && isAdmin();
+      }
+
+      match /ballots/{ballotId} {
+        // Strictly locked at DB level until election is closed & unsealed, or parent election is deleted for Admin cleanup
+        allow get: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(ballotId)
+          && isAdmin()
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'closed'
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.resultsUnsealed == true;
+        allow list: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isAdmin()
+          && (
+            !exists(/databases/$(database)/documents/elections/$(electionId)) ||
+            (get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'closed'
+              && get(/databases/$(database)/documents/elections/$(electionId)).data.resultsUnsealed == true)
+          );
+        allow create: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && isValidId(ballotId)
+          && isValidBallot(incoming(), electionId)
+          && isStaff()
+          && incoming().castAt == request.time
+          && getAfter(/databases/$(database)/documents/elections/$(electionId)).data.status == 'active';
+        allow update: if false;
+        allow delete: if isVerifiedSignedIn() && isValidId(electionId) && isValidId(ballotId) && isAdmin();
+      }
+
+      match /sealed_tallies/{tallyId} {
+        // Database-enforced result seal: unreadable even by Admins until polls close & unseal occurs
+        allow get: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && tallyId == 'official'
+          && isAdmin()
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'closed'
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.resultsUnsealed == true;
+        allow list: if false;
+        allow create: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && tallyId == 'official'
+          && isValidSealedTally(incoming(), electionId)
+          && isStaff()
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/elections/$(electionId));
+        allow update: if isVerifiedSignedIn()
+          && isValidId(electionId)
+          && tallyId == 'official'
+          && isValidSealedTally(incoming(), electionId)
+          && isStaff()
+          && incoming().electionId == existing().electionId
+          && incoming().updatedAt == request.time
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'active'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['counts', 'totalTallied', 'updatedAt']);
+        allow delete: if isVerifiedSignedIn() && isValidId(electionId) && isValidId(tallyId) && isAdmin();
+      }
+    }
+
+    match /booths/{boothId} {
+      allow get: if isVerifiedSignedIn() && isValidId(boothId) && isStaff();
+      allow list: if isVerifiedSignedIn() && isStaff();
+      allow create: if isVerifiedSignedIn()
+        && isValidId(boothId)
+        && isValidBooth(incoming())
+        && isAdmin()
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/elections/$(incoming().electionId));
+      allow update: if isVerifiedSignedIn()
+        && isValidId(boothId)
+        && isValidBooth(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'constituency', 'electionId', 'apiKeyPrefix', 'apiKeyHash',
+            'status', 'syncState', 'wifiRssi', 'syncLatencyMs', 'batteryPct',
+            'firmwareVersion', 'ballotVersion', 'votesCast', 'pendingOfflineVotes',
+            'offlineQueueBytes', 'localConflictCount', 'tamperState', 'lcdMessage',
+            'pendingCommand', 'lastHeartbeatAt', 'offlineSince', 'lastSyncAt', 'updatedAt'
+          ])) ||
+          (isOfficer() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'syncState', 'wifiRssi', 'syncLatencyMs', 'batteryPct',
+            'ballotVersion', 'votesCast', 'pendingOfflineVotes', 'offlineQueueBytes',
+            'localConflictCount', 'tamperState', 'lcdMessage', 'pendingCommand',
+            'lastHeartbeatAt', 'offlineSince', 'lastSyncAt', 'updatedAt'
+          ]))
+        );
+      allow delete: if isVerifiedSignedIn() && isValidId(boothId) && isAdmin();
+    }
+
+    match /voters/{voterId} {
+      allow get: if isVerifiedSignedIn() && isValidId(voterId) && isStaff();
+      allow list: if isVerifiedSignedIn() && isStaff();
+      allow create: if isVerifiedSignedIn()
+        && isValidId(voterId)
+        && isValidVoter(incoming())
+        && isStaff()
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/elections/$(incoming().electionId));
+      allow update: if isVerifiedSignedIn()
+        && isValidId(voterId)
+        && isValidVoter(incoming())
+        && incoming().electionId == existing().electionId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'voterIdNumber', 'constituency', 'enrollmentStatus',
+            'fingerprintTemplateId', 'enrolledBoothId', 'hasVoted',
+            'votedBoothId', 'votedAt', 'updatedAt'
+          ])) ||
+          // Terminal state lock: officers cannot modify a voter once hasVoted is true
+          (isOfficer()
+            && existing().hasVoted == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'enrollmentStatus', 'fingerprintTemplateId', 'enrolledBoothId',
+              'hasVoted', 'votedBoothId', 'votedAt', 'updatedAt'
+            ]))
+        );
+      allow delete: if isVerifiedSignedIn() && isValidId(voterId) && isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isVerifiedSignedIn() && isValidId(logId) && isStaff();
+      allow list: if isVerifiedSignedIn() && isStaff();
+      allow create: if isVerifiedSignedIn()
+        && isValidId(logId)
+        && isValidAuditLog(incoming())
+        && isStaff()
+        && incoming().actorUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      // Immutable append-only audit trail
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
